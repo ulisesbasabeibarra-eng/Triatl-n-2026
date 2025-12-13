@@ -1,1 +1,1 @@
-# Triatl-n-2026
+# Triatlon-2026
