@@ -9,6 +9,7 @@
 #define D6 25
 #define D7 26
 #define D8 27
+#define SENSORES_TOTAL 8
 
 // ===== Motores ====
 #define IN1A 22
@@ -37,7 +38,7 @@ const int ledChannel2 = 2;
 const int ledChannel3 = 3;
 
 // ===== Constantes y vaiables PID =====
-float kp = -2;     //proporcional-presente
+float kp = 2;     //proporcional-presente
 float ki = 0.01;  //integral-pasado
 float kd = 0.5;   //derivativo-futuro
 float error = 0;
@@ -45,8 +46,8 @@ float prevError = 0;
 float integral = 0;
 float derivative = 0;
 float outputPID = 0;
-float error = 0, lastError = 0, integral = 0, derivative = 0;
-float setpoint = 400;
+float lastError = 0;
+float setpoint = 3500;
 int   correccion = 0;
 
 // ========= Sensores =========
@@ -56,6 +57,13 @@ int valor_negro[8];
 int valor_umbrales[8];
 bool valor_binario[8];
 
+// ====== Precaución ======
+bool esperando_inicio = false; 
+bool activo = false;
+ulong tiempo_ini = 0;
+ulong prev_time, current_time, tiempo_trans, time_luz;
+const uint16_t tiempo_led = 3000;
+const uint16_t tiempo_comp = 5000;
 
 /*left = izq
   rigth = der*/
@@ -85,17 +93,6 @@ void motores(int izq, int der) {  //0 hasta 255 adelante 0 hasta -255 atras
   }
 }
 
-void prenderLedPorTiempo(unsigned long tiempo_ms){
-    digitalWrite(led, LOW);
-    delay(tiempo_ms);
-    digitalWrite(led, HIGH);
-}
-
-void precaucion(unsigned long espera) {
-motores(0,0);
-prenderLedPorTiempo(espera);
-}
-
 int calcularPID(int lectura) {
   error = setpoint - lectura;
   integral += error;
@@ -104,48 +101,109 @@ int calcularPID(int lectura) {
   return kp * error + ki * integral + kd * derivative;
 }
 
-void calibrar_sensores(){ //si se presiona una vez el boton empieza a leer valores del boton blanco, si se presiona 2 lee negros
+void printArrayBT(const char *label, const int *arr, int n){
+  SerialBT.print(label);
+  SerialBT.print(": ");
+  for (int i = 0; i < n; i++){
+    SerialBT.print(arr[i]);
+    if (i < n - 1)
+      SerialBT.print(", ");
+  }
+  SerialBT.println();
+}
+
+void calibrar_sensores(){ // si se presiona una vez el boton empieza a leer valores del boton blanco, si se presiona 2 lee negros
   digitalWrite(led, HIGH); // LED ON: inicio calibración
 
   // Presionar el boton para medir blanco (creo que se debe mantener presionado - no estoy seguro)
-  while (digitalRead(boton) == 0) {}
+  while (digitalRead(boton) == 0){}
   delay(10);
-  for (int x = 0; x < 8; x++) {
+  for (int x = 0; x < 8; x++){
     int valor_prom = 0;
-    for (int i = 0; i < 10; i++) valor_prom += analogRead(sensores[x]);
+    for (int i = 0; i < 10; i++)
+      valor_prom += analogRead(sensores[x]);
     valor_blanco[x] = valor_prom / 10;
   }
+  SerialBT.println("[CAL] Lectura BLANCO:");
+  printArrayBT("blanco", valor_blanco, 8);
 
-  while (digitalRead(boton) == 1)  {}
+  while (digitalRead(boton) == 1){}
   delay(10);
-  while (digitalRead(boton) == 0) {}// se usa en 0 por el pull up
+  while (digitalRead(boton) == 0){} // se usa en 0 por el pull up - seria un 1 logico -
   delay(10);
-  for (int x = 0; x < 8; x++) {
+  for (int x = 0; x < 8; x++){
     int valor_prom = 0;
-    for (int i = 0; i < 10; i++) valor_prom += analogRead(sensores[x]);
+    for (int i = 0; i < 10; i++)
+      valor_prom += analogRead(sensores[x]);
     valor_negro[x] = valor_prom / 10;
   }
-
-   // Calcular e imprimir umbrales
-  for (int x = 0; x < 8; x++) {
+  SerialBT.println("[CAL] Lectura BLANCO:");
+  printArrayBT("blanco", valor_negro, 8);
+  // Calcular e imprimir umbrales
+  for (int x = 0; x < 8; x++){
     valor_umbrales[x] = (valor_blanco[x] + valor_negro[x]) / 2;
   }
   SerialBT.println("[CAL] UMBRALES calculados:");
-
+  printArrayBT("umbral", valor_umbrales, 8);
 
   digitalWrite(led, LOW); // LED OFF: fin calibración
 
-  while (digitalRead(boton) == LOW) {}
+  while (digitalRead(boton) == LOW){}
   delay(10);
 }
 
+void precaucion() {
+    time_luz = tiempo_led;
+    current_time = millis(); 
+    tiempo_trans = current_time - tiempo_ini;
 
-void setup() {
+    //se enciende entre 3 y 5 segundos
+    // Condición: (tiempo transcurrido mayor o igual a 3000ms) Y (tiempo transcurrido menor a 5000ms)
+    if (tiempo_trans >= time_luz && tiempo_trans < tiempo_comp){
+        digitalWrite(led, HIGH);
+    } else {
+        digitalWrite(led, LOW);
+    }
+
+    if (tiempo_trans >=  tiempo_comp) {
+        // La cuenta regresiva terminó
+        esperando_inicio = false; // Desactiva el estado de espera
+        activo = true;            // Activa el estado de batalla
+        digitalWrite(led, LOW);   // Apaga la luz final
+    }
+
+    motores(0, 0); 
+}
+
+int leer_linea(){
+ int valores[SENSORES_TOTAL];
+ long suma = 0; // Usar long para evitar desbordamiento en sumas grandes
+ long suma_total = 0;
+
+ for (int i = 0; i < SENSORES_TOTAL; i++) {
+      // Usamos el puntero a los pines miembro _pinesSensores
+      // Leemos los pines como digitales (0 o 1). Si fueran analógicos, sería analogRead().
+      valores[i] = analogRead(sensores[i]); 
+      suma += valores[i];
+      suma_total += (long)valores[i] * i * 1000;
+    }
+
+if (suma == 0){
+      return lastError; // Usar _ultimoError (variable miembro)
+    }
+
+    // Posición centrada es: (NUM_SENSORES - 1) * 1000 / 2 = 7 * 1000 / 2 = 3500
+    // La posición retornada será (sumaPonderada / suma) - 3500
+    int posicion = (int)(suma_total / suma) - ((SENSORES_TOTAL - 1) * 500); 
+    return posicion;
+  }
+
+void setup(){
   Serial.begin(115200);
 
   // declaracion de pines regleta
-  for (int i = D1; i >= D8; i++){
-    pinMode(i, OUTPUT);
+  for (int i = 0; i < 8; i++){
+    pinMode(sensores[i], INPUT);
   }
 
   pinMode(led, OUTPUT);
@@ -163,33 +221,74 @@ void setup() {
 
   ledcSetup(ledChannel3, frequency, resolution);
   ledcAttachPin(IN2B, ledChannel3);
- 
-  precaucion(5000);  
+
+  calibrar_sensores();
 }
 
-void loop() {
+void loop(){
 
-   if(SerialBT.available() >0) {
-    char dato = SerialBT.read();
-    switch (dato){
-    case '1':
-      kp += 0.05f;
-      break;
-    case '2':
-      kd += 0.05f;
-      break;
-    case '3':
-      VBASE += 10;
-      SerialBT.print("la velocidad base ahora es:");
-      SerialBT.println(VBASE);
-      //VBASE = constrain(baseSpeed, 0, 255);
-      break; 
-
-    default:
-      break;
+  if (!activo && !esperando_inicio){
+    if (digitalRead(boton) == LOW){
+      tiempo_ini = millis(); // CRÍTICO: Asignar el tiempo de inicio UNA SOLA VEZ
+      esperando_inicio = true;
     }
-
+    return;
   }
 
-}
+  if (esperando_inicio){
+    precaucion();
+    return;
+  }
 
+  if (activo){
+
+    int posicion = leer_linea();
+
+    error = setpoint - posicion;
+
+    derivative = error - lastError;
+    integral += error;
+    lastError = error;
+    outputPID = (kp * error) + (ki * integral) + (kd * derivative);
+
+    int velocidad_izq = VBASE - outputPID;
+    int velocidad_der = VBASE +  outputPID;
+
+    motores(velocidad_izq, velocidad_der);
+
+    if (SerialBT.available() > 0){
+      char dato = SerialBT.read();
+      switch (dato){
+      case '1':
+        kp += 0.05f;
+        break;
+      case '2':
+        kp -= 0.05f;
+        break;
+
+      case '3':
+        kd += 0.1f;
+        break;
+      case '4':
+        kd -= 0.1f;
+        break;
+
+      case '5':
+        VBASE += 10;
+        SerialBT.print("la velocidad base ahora es:");
+        SerialBT.println(VBASE);
+        // VBASE = constrain(baseSpeed, 0, 255);
+        break;
+      case '6':
+        VBASE -= 10;
+        SerialBT.print("la velocidad base ahora es:");
+        SerialBT.println(VBASE);
+        // VBASE = constrain(baseSpeed, 0, 255);
+        break;
+
+      default:
+        break;
+      }
+    }
+  }
+}
