@@ -3,4 +3,4 @@ Robot Triatlon para Bonaereneses 2026 por parte de los Alumnos de 6° año
 
 <img width="760" height="560" alt="image" src="https://github.com/user-attachments/assets/d630f57c-20aa-4bd2-bd6c-b8e3d7471d75" />
 
-<img width="616" height="436" alt="image" src="https://github.com/user-attachments/assets/79b8fd46-b179-4f40-acef-43553c6ad38e" />
+<img width="760" height="436" alt="image" src="https://github.com/user-attachments/assets/79b8fd46-b179-4f40-acef-43553c6ad38e" />
